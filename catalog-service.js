@@ -182,6 +182,10 @@
 
     const coresDisponiveis = Array.from(mapaCores.values());
     const coresNomes = coresDisponiveis.map((c) => c.nome);
+    const coresComEstoqueDetalhes = coresDisponiveis.filter(
+      (c) => Number(c.estoqueTotalCor || 0) > 0
+    );
+    const coresComEstoque = coresComEstoqueDetalhes.map((c) => c.nome);
 
     // Agrupa tamanhos disponíveis ordenados
     const setTamanhos = new Set();
@@ -225,6 +229,8 @@
       descricao: raw.description || "",
       cores: coresNomes,
       coresDetalhes: coresDisponiveis,
+      coresComEstoque,
+      coresComEstoqueDetalhes,
       tamanhos: tamanhosDisponiveis,
       tamanhosComEstoque,
       variantes: variantesReferencia,

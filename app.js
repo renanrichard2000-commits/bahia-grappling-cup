@@ -53,8 +53,6 @@
   const estado = {
     abaAtual: "inicio",
     slugProdutoAberto: null,
-    selecaoTamanhoCard: {},
-    selecaoCorCard: {},
     busca: "",
     categoriaAtiva: "Todas",
     tamanhoFiltro: "Todos",
@@ -249,30 +247,14 @@
 
     const coresDisp = prod.cores && prod.cores.length ? prod.cores : [];
     const tamanhosDisp = prod.tamanhos && prod.tamanhos.length ? prod.tamanhos : [];
+    const tamanhosComEstoqueGeral = Array.isArray(prod.tamanhosComEstoque)
+      ? prod.tamanhosComEstoque
+      : tamanhosDisp;
 
-    // Escolhe inicialmente uma cor que possua estoque > 0, se houver
-    let corEscolhida =
-      estado.selecaoCorCard[prod.slug] && coresDisp.includes(estado.selecaoCorCard[prod.slug])
-        ? estado.selecaoCorCard[prod.slug]
-        : coresDisp.find((c) => window.RpmCatalog.hasColorAnyStock(prod.slug, c)) ||
-          coresDisp[0] ||
-          "";
-
-    function obterPrimeiroTamanhoComEstoque(cor) {
-      return (
-        tamanhosDisp.find((t) => window.RpmCatalog.getVariantStock(prod.slug, cor, t) > 0) ||
-        tamanhosDisp[0] ||
-        ""
-      );
-    }
-
-    let tamEscolhido =
-      estado.selecaoTamanhoCard[prod.slug] &&
-      tamanhosDisp.includes(estado.selecaoTamanhoCard[prod.slug]) &&
-      window.RpmCatalog.getVariantStock(prod.slug, corEscolhida, estado.selecaoTamanhoCard[prod.slug]) > 0
-        ? estado.selecaoTamanhoCard[prod.slug]
-        : obterPrimeiroTamanhoComEstoque(corEscolhida);
-
+    // A seleção de cor e tamanho ocorre exclusivamente pelo cliente dentro da página individual (sem pré-seleção automática)
+    let corEscolhida = coresDisp.length === 0 ? "Única" : "";
+    let tamEscolhido = tamanhosDisp.length === 0 ? "Único" : "";
+    let qtdEscolhida = 1;
     let indiceFotoAtiva = 0;
 
     function renderizarPaginaInterna() {
@@ -284,19 +266,53 @@
         ? Math.round(((prod.precoAntigo - prod.preco) / prod.precoAntigo) * 100)
         : 0;
 
-      const estoqueAtual =
-        corEscolhida && tamEscolhido
-          ? window.RpmCatalog.getVariantStock(prod.id, corEscolhida, tamEscolhido)
-          : 0;
-      const podeComprar = !prod.esgotadoGeral && Boolean(corEscolhida && tamEscolhido && estoqueAtual > 0);
+      const selecaoCompleta = Boolean(corEscolhida && tamEscolhido);
+      const estoqueAtual = selecaoCompleta
+        ? window.RpmCatalog.getVariantStock(prod.slug || prod.id, corEscolhida, tamEscolhido)
+        : 0;
+
+      if (selecaoCompleta && estoqueAtual > 0 && qtdEscolhida > estoqueAtual) {
+        qtdEscolhida = estoqueAtual;
+      }
+
+      const combinacaoDisponivel = !prod.esgotadoGeral && selecaoCompleta && estoqueAtual > 0;
+      const maxQtdPermitida = selecaoCompleta
+        ? Math.max(1, estoqueAtual)
+        : Math.max(1, Number(prod.estoqueTotal || 10));
 
       const fotoPrincipal = galeria[indiceFotoAtiva] ? galeria[indiceFotoAtiva].url : prod.imagem;
 
       // Produtos relacionados para navegação direta entre peças
       const relacionados = obterProdutosPublicados()
         .filter((item) => String(item.id) !== String(prod.id))
-        .sort((a, b) => Number(b.categoria === prod.categoria) - Number(a.categoria === prod.categoria))
+        .sort(
+          (a, b) => Number(b.categoria === prod.categoria) - Number(a.categoria === prod.categoria)
+        )
         .slice(0, 4);
+
+      const classeBannerEstoque = prod.esgotadoGeral
+        ? "out"
+        : !selecaoCompleta
+        ? "pending"
+        : combinacaoDisponivel
+        ? estoqueAtual <= 3
+          ? "low"
+          : "ok"
+        : "out";
+
+      const textoBannerEstoque = prod.esgotadoGeral
+        ? "✕ Peça temporariamente esgotada em todas as cores e tamanhos."
+        : !selecaoCompleta
+        ? "Selecione uma cor e um tamanho disponíveis acima para verificar o estoque exato e adicionar à sacola."
+        : combinacaoDisponivel
+        ? estoqueAtual <= 3
+          ? `🔥 Últimas ${estoqueAtual} unidade(s) disponíveis em ${escaparHtml(
+              corEscolhida
+            )} (${escaparHtml(tamEscolhido)})!`
+          : `✓ Em estoque para envio imediato (${estoqueAtual} un. disponíveis nesta combinação)`
+        : `✕ Combinação ${escaparHtml(corEscolhida)} • ${escaparHtml(
+            tamEscolhido || "—"
+          )} esgotada. Escolha outra opção disponível.`;
 
       container.innerHTML = `
         <nav class="product-breadcrumb" aria-label="Localização">
@@ -401,15 +417,15 @@
             ${
               coresDisp.length > 0
                 ? `
-              <div class="selector-group">
+              <div class="selector-group" id="grupo-seletor-cor">
                 <div class="selector-header">
-                  <span>Cor selecionada: <strong>${escaparHtml(corEscolhida)}</strong></span>
+                  <span>Cor: <strong>${escaparHtml(corEscolhida || "Selecione uma cor")}</strong></span>
                 </div>
                 <div class="color-chips">
                   ${(prod.coresDetalhes || coresDisp.map((n) => ({ name: n, hex: "#231b16" })))
                     .map((cObj) => {
                       const corTemEstoque = window.RpmCatalog.hasColorAnyStock(
-                        prod.id,
+                        prod.slug || prod.id,
                         cObj.name
                       );
                       return `
@@ -419,11 +435,12 @@
                         !corTemEstoque ? "color-out" : ""
                       }"
                         data-pag-cor="${escaparHtml(cObj.name)}"
+                        ${!corTemEstoque ? 'disabled title="Cor esgotada"' : ""}
                       >
                         <span class="color-dot-inline" style="background:${escaparHtml(
                           cObj.hex
                         )}"></span>
-                        <span>${escaparHtml(cObj.name)}</span>
+                        <span>${escaparHtml(cObj.name)}${!corTemEstoque ? " (Esgotada)" : ""}</span>
                       </button>
                     `;
                     })
@@ -438,28 +455,31 @@
             ${
               tamanhosDisp.length > 0
                 ? `
-              <div class="selector-group">
+              <div class="selector-group" id="grupo-seletor-tamanho">
                 <div class="selector-header">
-                  <span>Tamanho: <strong>${escaparHtml(tamEscolhido || "Selecione")}</strong></span>
+                  <span>Tamanho: <strong>${escaparHtml(
+                    tamEscolhido || "Selecione um tamanho"
+                  )}</strong></span>
                   <button type="button" class="text-btn" id="btn-medidas-pagina-prod">📏 Guia de Medidas</button>
                 </div>
                 <div class="size-chips">
                   ${tamanhosDisp
                     .map((tam) => {
-                      const qtdComb = window.RpmCatalog.getVariantStock(
-                        prod.id,
-                        corEscolhida,
-                        tam
-                      );
-                      const esgotadoTam = qtdComb <= 0;
+                      const esgotadoTam = corEscolhida
+                        ? window.RpmCatalog.getVariantStock(
+                            prod.slug || prod.id,
+                            corEscolhida,
+                            tam
+                          ) <= 0
+                        : !tamanhosComEstoqueGeral.includes(tam);
                       return `
                       <button
                         type="button"
-                        class="size-chip ${tamEscolhido === tam ? "selected" : ""} ${
+                        class="size-chip ${tamEscolhido === tam && !esgotadoTam ? "selected" : ""} ${
                         esgotadoTam ? "sold-out" : ""
                       }"
                         data-pag-tam="${escaparHtml(tam)}"
-                        ${esgotadoTam ? 'disabled title="Tamanho esgotado nesta cor"' : ""}
+                        ${esgotadoTam ? 'disabled title="Tamanho indisponível"' : ""}
                       >
                         ${escaparHtml(tam)}${esgotadoTam ? " (Esgotado)" : ""}
                       </button>
@@ -472,23 +492,44 @@
                 : ""
             }
 
+            <!-- SELETOR DE QUANTIDADE -->
+            ${
+              !prod.esgotadoGeral
+                ? `
+              <div class="selector-group product-qty-group">
+                <div class="selector-header">
+                  <span>Quantidade:</span>
+                  ${
+                    combinacaoDisponivel
+                      ? `<span class="product-qty-stock-hint">${estoqueAtual} disponível(is)</span>`
+                      : ""
+                  }
+                </div>
+                <div class="product-qty-control">
+                  <button
+                    type="button"
+                    class="qty-btn product-qty-btn"
+                    id="btn-pag-qtd-menos"
+                    aria-label="Diminuir quantidade"
+                    ${qtdEscolhida <= 1 ? "disabled" : ""}
+                  >−</button>
+                  <span class="qty-val product-qty-val" id="valor-pag-qtd">${qtdEscolhida}</span>
+                  <button
+                    type="button"
+                    class="qty-btn product-qty-btn"
+                    id="btn-pag-qtd-mais"
+                    aria-label="Aumentar quantidade"
+                    ${qtdEscolhida >= maxQtdPermitida ? "disabled" : ""}
+                  >+</button>
+                </div>
+              </div>
+            `
+                : ""
+            }
+
             <!-- INDICADOR DE DISPONIBILIDADE EM TEMPO REAL -->
-            <div class="variant-stock-banner ${
-              podeComprar ? (estoqueAtual <= 3 ? "low" : "ok") : "out"
-            }">
-              ${
-                prod.esgotadoGeral
-                  ? "✕ Peça temporariamente esgotada em todas as cores e tamanhos."
-                  : podeComprar
-                  ? estoqueAtual <= 3
-                    ? `🔥 Últimas ${estoqueAtual} unidade(s) disponíveis em ${escaparHtml(
-                        corEscolhida
-                      )} (${escaparHtml(tamEscolhido)})!`
-                    : `✓ Em estoque para envio imediato (${estoqueAtual} un. disponíveis nesta combinação)`
-                  : `✕ Combinação ${escaparHtml(corEscolhida)} • ${escaparHtml(
-                      tamEscolhido || "—"
-                    )} esgotada. Escolha outra opção disponível.`
-              }
+            <div class="variant-stock-banner ${classeBannerEstoque}">
+              ${textoBannerEstoque}
             </div>
 
             <div class="modal-actions-stack">
@@ -496,17 +537,17 @@
                 type="button"
                 class="btn btn-primary btn-block"
                 id="btn-pagina-add-sacola"
-                ${!podeComprar ? "disabled" : ""}
+                ${prod.esgotadoGeral ? "disabled" : ""}
               >
                 ${
-                  podeComprar
-                    ? `Adicionar à Sacola • ${formatarMoeda(prod.preco)}`
-                    : "Indisponível para Compra"
+                  prod.esgotadoGeral
+                    ? "Indisponível para Compra"
+                    : `Adicionar à Sacola • ${formatarMoeda(prod.preco * qtdEscolhida)}`
                 }
               </button>
 
               ${
-                podeComprar
+                !prod.esgotadoGeral
                   ? `
                 <button type="button" class="btn btn-whatsapp btn-block" id="btn-pagina-comprar-wa">
                   Comprar esta peça direto no WhatsApp
@@ -582,8 +623,12 @@
       // Troca de cor (troca foto correspondente se associada e valida tamanho com estoque)
       container.querySelectorAll("[data-pag-cor]").forEach((btn) => {
         btn.addEventListener("click", () => {
-          corEscolhida = btn.getAttribute("data-pag-cor");
-          estado.selecaoCorCard[prod.slug] = corEscolhida;
+          const novaCor = btn.getAttribute("data-pag-cor");
+          if (!window.RpmCatalog.hasColorAnyStock(prod.slug || prod.id, novaCor)) {
+            mostrarToast("Esta cor está temporariamente esgotada.");
+            return;
+          }
+          corEscolhida = novaCor;
 
           const idxFotoDaCor = galeria.findIndex(
             (img) =>
@@ -591,8 +636,12 @@
           );
           if (idxFotoDaCor >= 0) indiceFotoAtiva = idxFotoDaCor;
 
-          if (window.RpmCatalog.getVariantStock(prod.id, corEscolhida, tamEscolhido) <= 0) {
-            tamEscolhido = obterPrimeiroTamanhoComEstoque(corEscolhida);
+          // Se já havia um tamanho escolhido que não tem estoque nesta cor, limpa para o cliente escolher outro
+          if (
+            tamEscolhido &&
+            window.RpmCatalog.getVariantStock(prod.slug || prod.id, corEscolhida, tamEscolhido) <= 0
+          ) {
+            tamEscolhido = "";
           }
 
           renderizarPaginaInterna();
@@ -603,15 +652,39 @@
       container.querySelectorAll("[data-pag-tam]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const novoTam = btn.getAttribute("data-pag-tam");
-          if (window.RpmCatalog.getVariantStock(prod.id, corEscolhida, novoTam) <= 0) {
+          if (
+            corEscolhida &&
+            window.RpmCatalog.getVariantStock(prod.slug || prod.id, corEscolhida, novoTam) <= 0
+          ) {
             mostrarToast("Este tamanho está esgotado na cor selecionada.");
             return;
           }
           tamEscolhido = novoTam;
-          estado.selecaoTamanhoCard[prod.slug] = tamEscolhido;
           renderizarPaginaInterna();
         });
       });
+
+      // Controles de quantidade na página individual
+      const btnQtdMenos = document.getElementById("btn-pag-qtd-menos");
+      const btnQtdMais = document.getElementById("btn-pag-qtd-mais");
+      if (btnQtdMenos) {
+        btnQtdMenos.addEventListener("click", () => {
+          if (qtdEscolhida > 1) {
+            qtdEscolhida -= 1;
+            renderizarPaginaInterna();
+          }
+        });
+      }
+      if (btnQtdMais) {
+        btnQtdMais.addEventListener("click", () => {
+          if (qtdEscolhida < maxQtdPermitida) {
+            qtdEscolhida += 1;
+            renderizarPaginaInterna();
+          } else {
+            mostrarToast(`Quantidade máxima disponível atingida (${maxQtdPermitida} un.).`);
+          }
+        });
+      }
 
       const btnGuia = document.getElementById("btn-medidas-pagina-prod");
       if (btnGuia) {
@@ -620,28 +693,53 @@
         });
       }
 
+      function validarOpcoesEscolhidasNaPagina() {
+        if (!corEscolhida) {
+          const gCor = document.getElementById("grupo-seletor-cor");
+          if (gCor) gCor.classList.add("selector-attention");
+          mostrarToast("Escolha uma cor disponível antes de continuar ✨");
+          return false;
+        }
+        if (!tamEscolhido) {
+          const gTam = document.getElementById("grupo-seletor-tamanho");
+          if (gTam) gTam.classList.add("selector-attention");
+          mostrarToast("Escolha um tamanho disponível antes de continuar ✨");
+          return false;
+        }
+        if (estoqueAtual <= 0) {
+          mostrarToast("Esta combinação de cor e tamanho está sem estoque no momento.");
+          return false;
+        }
+        return true;
+      }
+
       const btnAdd = document.getElementById("btn-pagina-add-sacola");
-      if (btnAdd && podeComprar) {
+      if (btnAdd && !prod.esgotadoGeral) {
         btnAdd.addEventListener("click", () => {
-          adicionarNaSacola(prod, tamEscolhido, corEscolhida, 1, fotoPrincipal);
+          if (!validarOpcoesEscolhidasNaPagina()) return;
+          adicionarNaSacola(prod, tamEscolhido, corEscolhida, qtdEscolhida, fotoPrincipal);
         });
       }
 
       const btnComprarWa = document.getElementById("btn-pagina-comprar-wa");
-      if (btnComprarWa && podeComprar) {
+      if (btnComprarWa && !prod.esgotadoGeral) {
         btnComprarWa.addEventListener("click", async () => {
+          if (!validarOpcoesEscolhidasNaPagina()) return;
+
           const sessaoValida = await exigirAutenticacaoParaCompra();
           if (!sessaoValida) return;
 
           const urlDireta = `${window.location.origin}${window.buildRpmRouteUrl(
             `produto/${prod.slug}`
           )}`;
+          const totalItem = prod.preco * qtdEscolhida;
+          const totalPixItem = precoPix * qtdEscolhida;
           const msg = [
             `Olá! Vim pelo site da *${DADOS_LOJA.nomeLoja}* e gostaria de comprar esta peça: ✨`,
             "",
-            `• *${prod.nome}*`,
+            `• ${qtdEscolhida}x *${prod.nome}*`,
             `  Cor: *${corEscolhida}* | Tamanho: *${tamEscolhido}*`,
-            `  Valor: ${formatarMoeda(prod.preco)} (${formatarMoeda(precoPix)} no PIX)`,
+            `  Valor: ${formatarMoeda(totalItem)} (${formatarMoeda(totalPixItem)} no PIX)`,
             `  Link: ${urlDireta}`,
             "",
             "Poderia confirmar para finalizarmos?"
@@ -729,27 +827,30 @@
   }
 
   // ==========================================================================
-  // 4. GERADOR DE CARDS DE PRODUTOS (INÍCIO, CATÁLOGO E RELACIONADOS)
+  // 4. GERADOR DE CARDS DE PRODUTOS (CATÁLOGO INFORMATIVO — INÍCIO, CATÁLOGO E RELACIONADOS)
   // ==========================================================================
   function montarHtmlCardProduto(prod) {
     const percPix = DADOS_LOJA.descontoPixPercentual || 0;
     const parcelas = prod.parcelasMax || DADOS_LOJA.parcelasSemJuros || 3;
+    const rotaAlvo = prod.slug || String(prod.id);
 
-    const coresProd = prod.cores || [];
-    const corCard =
-      estado.selecaoCorCard[prod.slug] && coresProd.includes(estado.selecaoCorCard[prod.slug])
-        ? estado.selecaoCorCard[prod.slug]
-        : coresProd.find(
-            (c) => window.RpmCatalog && window.RpmCatalog.hasColorAnyStock(prod.slug, c)
-          ) ||
-          coresProd[0] ||
-          "";
+    // Somente cores reais cadastradas no produto que possuem estoque > 0
+    const coresDisponiveisCard = Array.isArray(prod.coresComEstoqueDetalhes)
+      ? prod.coresComEstoqueDetalhes
+      : (prod.coresDetalhes || []).filter((c) =>
+          window.RpmCatalog
+            ? window.RpmCatalog.hasColorAnyStock(rotaAlvo, c.name)
+            : Number(c.estoqueTotalCor || 0) > 0
+        );
 
-    const tamSelecionado =
-      estado.selecaoTamanhoCard[prod.slug] ||
-      (estado.tamanhoFiltro !== "Todos" && (prod.tamanhos || []).includes(estado.tamanhoFiltro)
-        ? estado.tamanhoFiltro
-        : "");
+    // Somente tamanhos reais cadastrados no produto que possuem estoque > 0
+    const tamanhosDisponiveisCard = Array.isArray(prod.tamanhosComEstoque)
+      ? prod.tamanhosComEstoque
+      : (prod.tamanhos || []).filter((tam) =>
+          (prod.variantesLoja || prod.variantes || []).some(
+            (v) => v.sizeCode === tam && Number(v.stockQuantity || 0) > 0
+          )
+        );
 
     const precoPix = prod.preco * (1 - percPix / 100);
     const valorParcela = prod.preco / parcelas;
@@ -763,7 +864,7 @@
 
     return `
       <article class="product-card" data-prod-id="${escaparHtml(prod.id)}">
-        <div class="product-media" data-abrir-pagina="${escaparHtml(prod.slug)}">
+        <div class="product-media" data-abrir-pagina="${escaparHtml(rotaAlvo)}">
           <img src="${escaparHtml(prod.imagem)}" alt="${escaparHtml(prod.nome)}" loading="lazy" />
           ${
             tagTexto
@@ -777,7 +878,7 @@
 
         <div class="product-info">
           <span class="product-cat">${escaparHtml(prod.categoria)}</span>
-          <h3 class="product-title" data-abrir-pagina="${escaparHtml(prod.slug)}">${escaparHtml(
+          <h3 class="product-title" data-abrir-pagina="${escaparHtml(rotaAlvo)}">${escaparHtml(
       prod.nome
     )}</h3>
 
@@ -798,66 +899,60 @@
             <div class="installment-hint">ou ${parcelas}x de ${formatarMoeda(valorParcela)} sem juros</div>
           </div>
 
-          <div class="card-sizes-wrap">
+          <div class="card-options-summary">
             ${
-              (prod.coresDetalhes || []).length > 0
-                ? `
-              <div class="card-colors-row" aria-label="Cores disponíveis">
-                ${prod.coresDetalhes
-                  .map(
-                    (cObj) => `
-                  <button
-                    type="button"
-                    class="card-color-dot ${corCard === cObj.name ? "selected" : ""}"
-                    style="background:${escaparHtml(cObj.hex)}"
-                    title="Cor: ${escaparHtml(cObj.name)}"
-                    aria-label="Cor ${escaparHtml(cObj.name)}"
-                    data-card-cor="${escaparHtml(cObj.name)}"
-                    data-card-prod="${escaparHtml(prod.slug)}"
-                  ></button>
-                `
-                  )
-                  .join("")}
-              </div>
+              prod.esgotadoGeral ||
+              (coresDisponiveisCard.length === 0 && tamanhosDisponiveisCard.length === 0)
+                ? `<div class="card-out-summary">Temporariamente sem estoque</div>`
+                : `
+              ${
+                coresDisponiveisCard.length > 0
+                  ? `
+                <div class="card-colors-summary" aria-label="Cores disponíveis">
+                  <div class="card-color-swatches">
+                    ${coresDisponiveisCard
+                      .map(
+                        (cObj) => `
+                      <span class="card-color-swatch-item">
+                        <span
+                          class="card-color-dot-static"
+                          style="background:${escaparHtml(cObj.hex)}"
+                          aria-hidden="true"
+                        ></span>
+                        <span class="card-color-swatch-name">${escaparHtml(cObj.name)}</span>
+                      </span>
+                    `
+                      )
+                      .join("")}
+                  </div>
+                </div>
+              `
+                  : ""
+              }
+
+              ${
+                tamanhosDisponiveisCard.length > 0
+                  ? `
+                <div class="card-sizes-summary" aria-label="Tamanhos disponíveis">
+                  <span class="card-summary-label">Tamanhos disponíveis:</span>
+                  <div class="card-size-tags">
+                    ${tamanhosDisponiveisCard
+                      .map((tam) => `<span class="card-size-tag">${escaparHtml(tam)}</span>`)
+                      .join("")}
+                  </div>
+                </div>
+              `
+                  : ""
+              }
             `
-                : ""
             }
-
-            <div class="card-size-label" data-label-tam>
-              <span>${corCard ? `${escaparHtml(corCard)} • ` : ""}Tamanho:</span>
-              ${tamSelecionado ? `<strong>${escaparHtml(tamSelecionado)}</strong>` : ""}
-            </div>
-
-            <div class="size-chips">
-              ${(prod.tamanhos || [])
-                .map((tam) => {
-                  const est =
-                    window.RpmCatalog && corCard
-                      ? window.RpmCatalog.getVariantStock(prod.slug, corCard, tam)
-                      : 5;
-                  const semEst = est <= 0;
-                  return `
-                  <button
-                    type="button"
-                    class="size-chip ${tamSelecionado === tam && !semEst ? "selected" : ""} ${
-                    semEst ? "sold-out" : ""
-                  }"
-                    data-card-tam="${escaparHtml(tam)}"
-                    data-card-prod="${escaparHtml(prod.slug)}"
-                    ${semEst ? 'disabled title="Esgotado nesta cor"' : ""}
-                  >${escaparHtml(tam)}</button>
-                `;
-                })
-                .join("")}
-            </div>
 
             <button
               type="button"
-              class="btn-card-add"
-              data-add-card="${escaparHtml(prod.slug)}"
-              ${prod.esgotadoGeral ? "disabled" : ""}
+              class="btn-card-buy"
+              data-comprar-card="${escaparHtml(rotaAlvo)}"
             >
-              ${prod.esgotadoGeral ? "Peça Esgotada" : "Adicionar à Sacola"}
+              COMPRAR
             </button>
           </div>
         </div>
@@ -868,75 +963,11 @@
   function conectarEventosDeGrade(container) {
     if (!container) return;
 
-    container.querySelectorAll("[data-abrir-pagina]").forEach((el) => {
+    container.querySelectorAll("[data-abrir-pagina], [data-comprar-card]").forEach((el) => {
       el.addEventListener("click", () => {
-        abrirPaginaProduto(el.getAttribute("data-abrir-pagina"));
-      });
-    });
-
-    container.querySelectorAll("[data-card-cor]").forEach((dot) => {
-      dot.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const prodSlug = dot.getAttribute("data-card-prod");
-        const cor = dot.getAttribute("data-card-cor");
-        estado.selecaoCorCard[prodSlug] = cor;
-
-        const tamAtual = estado.selecaoTamanhoCard[prodSlug];
-        if (tamAtual && window.RpmCatalog.getVariantStock(prodSlug, cor, tamAtual) <= 0) {
-          delete estado.selecaoTamanhoCard[prodSlug];
-        }
-
-        renderizarVitrinesInicio();
-        renderizarCatalogo();
-        if (estado.abaAtual === "produto" && estado.slugProdutoAberto) {
-          abrirPaginaProduto(estado.slugProdutoAberto, { rolarTopo: false, pushHistory: false });
-        }
-      });
-    });
-
-    container.querySelectorAll("[data-card-tam]").forEach((chip) => {
-      chip.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const prodSlug = chip.getAttribute("data-card-prod");
-        const tam = chip.getAttribute("data-card-tam");
-        estado.selecaoTamanhoCard[prodSlug] = tam;
-        renderizarVitrinesInicio();
-        renderizarCatalogo();
-      });
-    });
-
-    container.querySelectorAll("[data-add-card]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const prodSlug = btn.getAttribute("data-add-card");
-        const prod = obterProdutosPublicados().find(
-          (p) => p.slug === prodSlug || String(p.id) === String(prodSlug)
-        );
-        if (!prod || prod.esgotadoGeral) return;
-
-        const corEscolhida =
-          estado.selecaoCorCard[prod.slug] ||
-          (prod.cores || []).find((c) => window.RpmCatalog.hasColorAnyStock(prod.slug, c)) ||
-          (prod.cores && prod.cores[0]) ||
-          "Única";
-
-        const tam =
-          estado.selecaoTamanhoCard[prod.slug] ||
-          (estado.tamanhoFiltro !== "Todos" && (prod.tamanhos || []).includes(estado.tamanhoFiltro)
-            ? estado.tamanhoFiltro
-            : "");
-
-        if (!tam) {
-          const card = btn.closest(".product-card");
-          const label = card ? card.querySelector("[data-label-tam]") : null;
-          if (label) {
-            label.innerHTML = "<span>👆 Escolha um tamanho:</span>";
-            label.classList.add("error-pulse");
-          }
-          mostrarToast("Selecione um tamanho disponível antes de adicionar à sacola ✨");
-          return;
-        }
-
-        adicionarNaSacola(prod, tam, corEscolhida, 1);
+        const destino =
+          el.getAttribute("data-comprar-card") || el.getAttribute("data-abrir-pagina");
+        if (destino) abrirPaginaProduto(destino);
       });
     });
   }
@@ -1112,9 +1143,11 @@
 
     if (estado.tamanhoFiltro !== "Todos") {
       lista = lista.filter((p) => {
-        if (!(p.tamanhos || []).includes(estado.tamanhoFiltro)) return false;
-        return (p.variantes || []).some(
-          (v) => v.sizeCode === estado.tamanhoFiltro && v.stockQuantity > 0
+        if (Array.isArray(p.tamanhosComEstoque)) {
+          return p.tamanhosComEstoque.includes(estado.tamanhoFiltro);
+        }
+        return (p.variantesLoja || p.variantes || []).some(
+          (v) => v.sizeCode === estado.tamanhoFiltro && Number(v.stockQuantity || 0) > 0
         );
       });
     }
@@ -2137,7 +2170,8 @@
     resolverRotaAtual(false);
 
     if (window.RpmCatalog && window.RpmCatalog.loadCatalog) {
-      await window.RpmCatalog.loadCatalog(true);
+      await window.RpmCatalog.loadCatalog(false);
+      reRenderizarVitrineCompleta();
       resolverRotaAtual(false);
     }
   });
