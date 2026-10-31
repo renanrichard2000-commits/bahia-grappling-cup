@@ -109,7 +109,14 @@
   // 1. NAVEGAÇÃO ENTRE ABAS E ROTAS LIMPAS (/RPM_MODAS/produto/<slug>)
   // ==========================================================================
   function ocultarSecoesPrincipais() {
-    ["aba-inicio", "aba-catalogo", "aba-contato", "aba-produto", "aba-admin"].forEach((id) => {
+    [
+      "aba-inicio",
+      "aba-catalogo",
+      "aba-contato",
+      "aba-institucional",
+      "aba-produto",
+      "aba-admin"
+    ].forEach((id) => {
       const sec = document.getElementById(id);
       if (sec) sec.classList.add("hidden");
     });
@@ -1945,6 +1952,40 @@
     abrirCamada(document.getElementById("sacola-drawer"));
   }
 
+  function abrirPaginaInstitucional(slug, opcoes = {}) {
+    const { rolarTopo = true, pushHistory = true } = opcoes;
+    const slugLimpo = String(slug || "sobre-nos")
+      .trim()
+      .toLowerCase();
+
+    fecharTodosModais();
+    if (window.RPMAdmin) window.RPMAdmin.closePanel();
+    ocultarSecoesPrincipais();
+    marcarAbaMenuAtiva(null);
+
+    const secInst = document.getElementById("aba-institucional");
+    if (!secInst) return;
+    secInst.dataset.slugAtual = slugLimpo;
+    secInst.classList.remove("hidden");
+    estado.abaAtual = "institucional";
+    estado.slugProdutoAberto = null;
+
+    if (window.RPMCms && window.RPMCms.renderInstitutionalPage) {
+      window.RPMCms.renderInstitutionalPage(slugLimpo);
+    }
+
+    if (pushHistory) {
+      try {
+        const urlPag = window.buildRpmRouteUrl(`pagina/${encodeURIComponent(slugLimpo)}`);
+        window.history.pushState({ view: "pagina", slug: slugLimpo }, "", urlPag);
+      } catch (_) {}
+    }
+
+    if (rolarTopo) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
   function resolverRotaAtual(rolarTopo = false) {
     const subrota = window.getRpmCurrentSubroute ? window.getRpmCurrentSubroute() : "/";
 
@@ -1952,6 +1993,14 @@
       const slug = decodeURIComponent(subrota.replace(/^\/produto\//, "").replace(/\/+$/, ""));
       if (slug) {
         abrirPaginaProduto(slug, { rolarTopo, pushHistory: false });
+        return;
+      }
+    }
+
+    if (subrota.startsWith("/pagina/")) {
+      const slugPag = decodeURIComponent(subrota.replace(/^\/pagina\//, "").replace(/\/+$/, ""));
+      if (slugPag) {
+        abrirPaginaInstitucional(slugPag, { rolarTopo, pushHistory: false });
         return;
       }
     }
@@ -1971,11 +2020,34 @@
     }
   }
 
+  function conectarEventosBuscaInicio() {
+    const inputHome = document.getElementById("input-pesquisa-inicio");
+    const formHome = document.getElementById("form-pesquisa-inicio");
+    if (inputHome && !inputHome.dataset.boundCms) {
+      inputHome.dataset.boundCms = "1";
+      inputHome.addEventListener("input", (e) => {
+        atualizarResultadosRapidosInicio(e.target.value);
+      });
+    }
+    if (formHome && !formHome.dataset.boundCms) {
+      formHome.dataset.boundCms = "1";
+      formHome.addEventListener("submit", (e) => {
+        e.preventDefault();
+        aplicarBuscaEIrParaCatalogo(inputHome ? inputHome.value : "");
+      });
+    }
+  }
+
   function reRenderizarVitrineCompleta() {
     preencherDadosDaLoja();
     renderizarFiltroTamanhosDinamico();
     renderizarPillsCategorias();
-    renderizarVitrinesInicio();
+    if (window.RPMCms && window.RPMCms.reapplyActiveConfig) {
+      window.RPMCms.reapplyActiveConfig();
+      marcarAbaMenuAtiva(["inicio", "catalogo", "contato"].includes(estado.abaAtual) ? estado.abaAtual : null);
+    } else {
+      renderizarVitrinesInicio();
+    }
     renderizarCatalogo();
     renderizarSacola();
 
@@ -1994,17 +2066,7 @@
       });
     });
 
-    const inputHome = document.getElementById("input-pesquisa-inicio");
-    const formHome = document.getElementById("form-pesquisa-inicio");
-
-    inputHome.addEventListener("input", (e) => {
-      atualizarResultadosRapidosInicio(e.target.value);
-    });
-
-    formHome.addEventListener("submit", (e) => {
-      e.preventDefault();
-      aplicarBuscaEIrParaCatalogo(inputHome.value);
-    });
+    conectarEventosBuscaInicio();
 
     document.querySelectorAll("[data-atalho-cat]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -2026,7 +2088,7 @@
       });
     });
 
-    document.getElementById("btn-ver-todas-promos").addEventListener("click", () => {
+    document.getElementById("btn-ver-todas-promos")?.addEventListener("click", () => {
       limparTodosOsFiltros();
       estado.precoFiltro = "promocao";
       document.getElementById("filtro-preco").value = "promocao";
@@ -2162,15 +2224,55 @@
     });
   }
 
+  // Ponte pública segura para o CMS renderizar vitrines dinâmicas mantendo 100% do fluxo oficial
+  window.RPMStoreUI = Object.freeze({
+    renderProductCardsInto(containerEl, listaProdutos) {
+      if (!containerEl) return;
+      const lista = Array.isArray(listaProdutos) ? listaProdutos : [];
+      if (lista.length === 0) {
+        containerEl.innerHTML = `<div style="grid-column:1/-1;padding:1.5rem;text-align:center;color:var(--ink-soft);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);">Nenhuma peça disponível nesta seleção no momento.</div>`;
+        return;
+      }
+      containerEl.innerHTML = lista.map(montarHtmlCardProduto).join("");
+      conectarEventosDeGrade(containerEl);
+    },
+    bindHomeSearchEvents: conectarEventosBuscaInicio,
+    navigateToTab: navegarParaAba,
+    openInstitutionalPage: abrirPaginaInstitucional,
+    openCategoryFilter(nomeCategoria) {
+      limparTodosOsFiltros();
+      estado.categoriaAtiva = nomeCategoria || "Todas";
+      renderizarPillsCategorias();
+      renderizarCatalogo();
+      navegarParaAba("catalogo");
+    },
+    openPromoFilter() {
+      limparTodosOsFiltros();
+      estado.precoFiltro = "promocao";
+      const fp = document.getElementById("filtro-preco");
+      if (fp) fp.value = "promocao";
+      renderizarCatalogo();
+      navegarParaAba("catalogo");
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", async () => {
     configurarEventos();
 
-    // Renderiza imediatamente e em seguida sincroniza com o banco Supabase
+    // Renderiza imediatamente e em seguida sincroniza com o banco Supabase (Catálogo + CMS Publicado)
     reRenderizarVitrineCompleta();
     resolverRotaAtual(false);
 
+    const promessas = [];
     if (window.RpmCatalog && window.RpmCatalog.loadCatalog) {
-      await window.RpmCatalog.loadCatalog(false);
+      promessas.push(window.RpmCatalog.loadCatalog(false));
+    }
+    if (window.RPMCms && window.RPMCms.loadPublished) {
+      promessas.push(window.RPMCms.loadPublished(false));
+    }
+
+    if (promessas.length > 0) {
+      await Promise.allSettled(promessas);
       reRenderizarVitrineCompleta();
       resolverRotaAtual(false);
     }

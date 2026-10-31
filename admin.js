@@ -75,8 +75,13 @@
 
     await window.RpmCatalog.loadCatalog(true);
 
-    // Oculta páginas públicas da loja e exibe a área administrativa
-    ["aba-inicio", "aba-catalogo", "aba-contato", "aba-produto"].forEach((id) => {
+    // Fecha gavetas/overlays abertos e oculta páginas públicas da loja antes de exibir a área administrativa
+    ["backdrop", "sacola-drawer", "menu-mobile", "modal-produto", "modal-medidas", "modal-confirmacao"].forEach(
+      (id) => document.getElementById(id)?.classList.add("hidden")
+    );
+    document.body.style.overflow = "";
+
+    ["aba-inicio", "aba-catalogo", "aba-contato", "aba-institucional", "aba-produto"].forEach((id) => {
       const sec = document.getElementById(id);
       if (sec) sec.classList.add("hidden");
     });
@@ -127,7 +132,12 @@
       { id: "categorias", label: "Categorias" },
       { id: "cores-tamanhos", label: "Cores e tamanhos" },
       { id: "estoque", label: "Estoque" },
-      { id: "configuracoes", label: "Configurações" }
+      { id: "configuracoes", label: "Configurações" },
+      {
+        id: "modo-adm-avancado",
+        label: "MODO ADM AVANÇADO",
+        desc: "Personalize completamente o visual e o conteúdo da RPM MODAS."
+      }
     ];
 
     const usernameAdmin = (window.RPMAuth && window.RPMAuth.getAdminUsername()) || "Administradora";
@@ -159,8 +169,16 @@
                   type="button"
                   class="admin-nav-item ${estadoAdmin.abaPainel === m.id ? "active" : ""}"
                   data-admin-tab="${m.id}"
+                  ${m.desc ? `title="${esc(m.desc)}"` : ""}
                 >
                   ${esc(m.label)}
+                  ${
+                    m.desc
+                      ? `<span style="display:block;font-size:0.68rem;font-weight:400;opacity:0.82;margin-top:0.15rem;line-height:1.25;">${esc(
+                          m.desc
+                        )}</span>`
+                      : ""
+                  }
                 </button>
               `
                 )
@@ -242,6 +260,11 @@
         break;
       case "configuracoes":
         renderizarConfiguracoes(area);
+        break;
+      case "modo-adm-avancado":
+        if (window.RPMCmsEditor && window.RPMCmsEditor.render) {
+          window.RPMCmsEditor.render(area);
+        }
         break;
       default:
         renderizarVisaoGeral(area);
@@ -1964,6 +1987,10 @@
 
   window.RPMAdmin = Object.freeze({
     openPanel: abrirPainelAdmin,
-    closePanel: limparPainelAdmin
+    closePanel: limparPainelAdmin,
+    openAdvancedEditor() {
+      estadoAdmin.abaPainel = "modo-adm-avancado";
+      return abrirPainelAdmin(true);
+    }
   });
 })();

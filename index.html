@@ -474,6 +474,13 @@
     </section>
 
     <!-- ======================================================================
+         PÁGINAS INSTITUCIONAIS PERSONALIZÁVEIS (/RPM_MODAS/pagina/<slug>)
+         ====================================================================== -->
+    <section id="aba-institucional" class="tab-page hidden" aria-label="Página Institucional">
+      <div class="container product-page-container" id="conteudo-pagina-institucional"></div>
+    </section>
+
+    <!-- ======================================================================
          PÁGINA INDIVIDUAL DE CADA ROUPA (/RPM_MODAS/produto/<slug>)
          ====================================================================== -->
     <section id="aba-produto" class="tab-page hidden" aria-label="Detalhes do Produto">
@@ -806,12 +813,14 @@
   <!-- TOAST -->
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
-  <!-- BIBLIOTECA SUPABASE + CATÁLOGO DINÂMICO, AUTENTICAÇÃO, PAINEL ADMIN E LOJA -->
+  <!-- BIBLIOTECA SUPABASE + CATÁLOGO DINÂMICO, CMS VISUAL, AUTENTICAÇÃO, PAINEL ADMIN E LOJA -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="supabase-config.js"></script>
   <script src="dados-loja.js"></script>
   <script src="catalog-service.js"></script>
+  <script src="cms-service.js"></script>
   <script src="auth.js"></script>
+  <script src="cms-editor.js"></script>
   <script src="admin.js"></script>
   <script src="app.js"></script>
 </body>
